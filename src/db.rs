@@ -48,7 +48,7 @@ impl Database {
         if let Ok(cwd) = std::env::current_dir() {
             println!("[DEBUG] Current working directory: {:?}", cwd);
         }
-        for dir in [".", "/app", "/out/bin"] {
+        for dir in [".", "/app", "/"] {
             if let Ok(entries) = fs::read_dir(dir) {
                 let files: Vec<_> = entries.filter_map(|e| e.ok().map(|e| e.file_name().into_string().unwrap_or_default())).collect();
                 println!("[DEBUG] Files in '{}': {:?}", dir, files);
@@ -58,55 +58,76 @@ impl Database {
 
         let content = match fs::read_to_string(&path) {
             Ok(c) => {
-                println!("[INFO] Loading database from: {}", path);
+                println!("[INFO] Loading database from file: {}", path);
                 c
             },
             Err(e) => {
+                println!("[WARN] Could not find database at {}. Searching fallbacks...", path);
                 // Try several fallback locations
                 let fallbacks = [
                     "db.json", 
                     "./db.json", 
                     "/app/db.json", 
                     "app/db.json", 
-                    "../db.json", 
-                    "target/release/db.json",
-                    "/out/bin/db.json"
+                    "../db.json"
                 ];
                 let mut found_content = None;
                 
                 for fb in fallbacks {
                     if let Ok(c) = fs::read_to_string(fb) {
-                        println!("[INFO] Loading database from fallback: {}", fb);
+                        println!("[INFO] Found database at fallback: {}", fb);
                         found_content = Some(c);
                         break;
                     }
                 }
                 
                 match found_content {
-                    Some(c) => c,
+                    Some(c) => {
+                        println!("[INFO] Using database from fallback file.");
+                        c
+                    },
                     None => {
-                        println!("[ERROR] Could not find database file at {} or any fallbacks. Last error: {}", path, e);
-                        return Err(e.into());
+                        println!("[WARN] No database file found on disk. Using EMBEDDED database fallback.");
+                        // Fallback to embedded content so the bot doesn't crash
+                        include_str!("../db.json").to_string()
                     }
                 }
             }
         };
 
-        let data: DbData = serde_json::from_str(&content)?;
-        Ok(Self { data })
+        match serde_json::from_str::<DbData>(&content) {
+            Ok(data) => Ok(Self { data }),
+            Err(e) => {
+                println!("[ERROR] Failed to parse database JSON: {}", e);
+                // If parsing fails, we might as well return the error, 
+                // but at least we tried every path.
+                Err(e.into())
+            }
+        }
     }
 
     pub fn save(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let path = std::env::var("DATABASE_PATH").unwrap_or_else(|_| "db.json".to_string());
         let content = serde_json::to_string_pretty(&self.data)?;
         
-        if let Err(e) = fs::write(&path, content.clone()) {
-            if path == "db.json" {
-                let fallback = "app/db.json";
-                fs::write(fallback, content)?;
+        // Try to save to multiple locations to ensure persistence if possible
+        let paths = [path.as_str(), "db.json", "/app/db.json"];
+        let mut saved = false;
+
+        for p in paths {
+            if let Err(e) = fs::write(p, content.clone()) {
+                println!("[WARN] Failed to save database to {}: {}", p, e);
             } else {
-                return Err(e.into());
+                println!("[INFO] Successfully saved database to {}", p);
+                saved = true;
+                // We only need to save to one location successfully
+                break; // Added break here to stop trying once saved
             }
+        }
+
+        if !saved {
+            println!("[ERROR] Failed to save database to ANY location!");
+            return Err("Failed to save database to any location".into());
         }
         Ok(())
     }

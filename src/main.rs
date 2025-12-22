@@ -477,7 +477,16 @@ async fn main() {
     env_logger::init();
     
     let token = std::env::var("DISCORD_TOKEN").expect("Expected a DISCORD_TOKEN in the environment");
-    let database = Arc::new(Mutex::new(Database::load().expect("Failed to load database")));
+    let database_res = Database::load();
+    let database = match database_res {
+        Ok(db) => Arc::new(Mutex::new(db)),
+        Err(e) => {
+            println!("[CRITICAL] Failed to load database: {}. Bot may not function correctly.", e);
+            // We still need a database object to continue, so we'll try to create a dummy one if possible
+            // or just exit gracefully instead of panicking.
+            return; 
+        }
+    };
     
     let handler = Handler {
         db: database,

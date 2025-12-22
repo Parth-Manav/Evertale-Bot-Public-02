@@ -4,10 +4,9 @@ nixPkgs = ["openssl", "pkg-config"]
 [phases.build]
 cmds = [
     "cargo build --release", 
-    "mkdir -p /app", 
-    "cp target/release/evertext_bot_rust /app/", 
-    "cp db.json /app/"
+    "cp db.json target/release/evertext_bot_rust_db.json", # Backup in build dir
+    "cp db.json /app/db.json || true" # Try to put it where we want it
 ]
 
 [start]
-cmd = "/app/evertext_bot_rust"
+cmd = "./evertext_bot_rust"
