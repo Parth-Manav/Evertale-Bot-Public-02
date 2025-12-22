@@ -84,13 +84,17 @@ impl EvertextClient {
 
         println!("[INFO][PID:{}] Starting session for account: {}", std::process::id(), account.name);
 
-        loop {
-            // Heartbeat Logic
-            if last_ping.elapsed().as_millis() as u64 > self.ping_interval {
-                // Ping is usually handled by the server sending '2'
-            }
+        let mut heartbeat_check = tokio::time::interval(Duration::from_secs(5));
 
+        loop {
             tokio::select! {
+                _ = heartbeat_check.tick() => {
+                     // Check if we haven't received a ping in a while (interval + 15s grace period)
+                     if last_ping.elapsed().as_millis() as u64 > (self.ping_interval + 15000) {
+                         println!("[ERROR] Connection timed out (no heartbeat from server). Last ping: {} ms ago", last_ping.elapsed().as_millis());
+                         return Err("CONNECTION_TIMEOUT".into());
+                     }
+                }
                 msg = self.read.next() => {
                     match msg {
                         Some(Ok(m)) => {
@@ -155,12 +159,15 @@ impl EvertextClient {
                              println!("[TERMINAL] {}", clean_log.chars().take(150).collect::<String>());
                          }
                          
-                         // Update history for multi-line parsing
-                         self.history.push_str(output_text);
-                         if self.history.len() > 10000 {
-                             let drain_len = self.history.len() - 10000;
-                             self.history.replace_range(..drain_len, "");
-                         }
+                        // Update history for multi-line parsing
+                        self.history.push_str(output_text);
+                        if self.history.len() > 10000 {
+                            let mut drain_len = self.history.len() - 10000;
+                            while !self.history.is_char_boundary(drain_len) && drain_len > 0 {
+                                drain_len -= 1;
+                            }
+                            self.history.replace_range(..drain_len, "");
+                        }
 
                          // --- 1. Initial / Login Flow ---
                          if output_text.contains("Enter Command to use") {
