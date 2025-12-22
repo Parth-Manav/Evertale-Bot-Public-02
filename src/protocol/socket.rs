@@ -80,7 +80,7 @@ impl EvertextClient {
         let mut state = GameState::Connected;
         let mut waiting_started: Option<Instant> = None;
 
-        println!("[INFO] Starting session for account: {}", account.name);
+        println!("[INFO][PID:{}] Starting session for account: {}", std::process::id(), account.name);
 
         loop {
             // Heartbeat Logic
@@ -183,18 +183,18 @@ impl EvertextClient {
                          if output_text.contains("Enter Command to use") {
                              println!("[DEBUG] State check for 'd': {:?}", state);
                              if *state == GameState::Connected || *state == GameState::WaitingProcedure {
-                                 println!("[From TERMINAL] Enter Command to use. Sending 'd'...");
-                                 self.send_command("d").await?;
+                                 println!("[PID:{}] [From TERMINAL] Enter Command to use. Sending 'd'...", std::process::id());
                                  *state = GameState::SentD;
+                                 self.send_command("d").await?;
                              }
                          }
                          
                          if output_text.contains("Enter Restore code") {
                              println!("[DEBUG] State check for code: {:?}", state);
                              if *state == GameState::SentD || *state == GameState::Connected || *state == GameState::WaitingProcedure {
-                                 println!("[From TERMINAL] Enter Restore code. Sending Code...");
-                                 self.send_command(code).await?;
+                                 println!("[PID:{}] [From TERMINAL] Enter Restore code. Sending Code...", std::process::id());
                                  *state = GameState::SentCode;
+                                 self.send_command(code).await?;
                              }
                          }
 

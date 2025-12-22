@@ -35,7 +35,7 @@ impl Handler {
         false
     }
 
-    async fn log_message(db: Arc<Mutex<Database>>, http: Arc<Http>, message: String) {
+    async fn log_message(db: Arc<Mutex<Database>>, http: Arc<Http>, message: String, skip_channel: Option<ChannelId>) {
         let db = db.lock().await;
         if let Some(true) = db.data.settings.mute_bot_messages {
             return;
@@ -43,6 +43,9 @@ impl Handler {
         if let Some(channel_id_str) = &db.data.settings.log_channel_id {
             if let Ok(channel_id) = channel_id_str.parse::<u64>() {
                 let channel = ChannelId::new(channel_id);
+                if Some(channel) == skip_channel {
+                    return;
+                }
                 let _ = channel.say(&http, message).await;
             }
         }
@@ -118,7 +121,7 @@ impl Handler {
                                 if let Some(chan) = source_channel {
                                     let _ = chan.say(&http_clone, format!("[SUCCESS] **{}** completed.", acc.name)).await;
                                 }
-                                Self::log_message(Arc::clone(&db_clone), Arc::clone(&http_clone), format!("[SUCCESS] Automation: **{}** completed successfully.", acc.name)).await;
+                                Self::log_message(Arc::clone(&db_clone), Arc::clone(&http_clone), format!("[SUCCESS] Automation: **{}** completed successfully.", acc.name), source_channel).await;
                             },
                             Err(e) => {
                                 let err_str = e.to_string();
@@ -126,7 +129,7 @@ impl Handler {
                                     if let Some(chan) = source_channel {
                                         let _ = chan.say(&http_clone, format!("[WARN] Zigza error on **{}**. Waiting 6 mins before retry.", acc.name)).await;
                                     }
-                                    Self::log_message(Arc::clone(&db_clone), Arc::clone(&http_clone), format!("[WARN] Automation: Zigza detected on **{}**. Retrying in 6m.", acc.name)).await;
+                                    Self::log_message(Arc::clone(&db_clone), Arc::clone(&http_clone), format!("[WARN] Automation: Zigza detected on **{}**. Retrying in 6m.", acc.name), source_channel).await;
                                     {
                                         let mut db = db_clone.lock().await;
                                         let _ = db.update_status(&acc.name, "error: Zigza Retrying");
@@ -137,14 +140,14 @@ impl Handler {
                                     if let Some(chan) = source_channel {
                                         let _ = chan.say(&http_clone, format!("[WARN] Server Full. Retrying **{}** in 5 mins.", acc.name)).await;
                                     }
-                                    Self::log_message(Arc::clone(&db_clone), Arc::clone(&http_clone), format!("[WARN] Automation: Server full. Retrying **{}** in 5m.", acc.name)).await;
+                                    Self::log_message(Arc::clone(&db_clone), Arc::clone(&http_clone), format!("[WARN] Automation: Server full. Retrying **{}** in 5m.", acc.name), source_channel).await;
                                     tokio::time::sleep(tokio::time::Duration::from_secs(300)).await;
                                     pending_accounts_to_process.insert(0, acc); // Front
                                 } else if err_str.contains("LOGIN_REQUIRED") {
                                     if let Some(chan) = source_channel {
                                         let _ = chan.say(&http_clone, "⚠️ **CRITICAL: Session cookie expired!** Stopping queue.").await;
                                     }
-                                    Self::log_message(Arc::clone(&db_clone), Arc::clone(&http_clone), "⚠️ **[CRITICAL] Automation: Session cookie expired!** Stopping queue.".to_string()).await;
+                                    Self::log_message(Arc::clone(&db_clone), Arc::clone(&http_clone), "⚠️ **[CRITICAL] Automation: Session cookie expired!** Stopping queue.".to_string(), source_channel).await;
                                     break;
                                 } else {
                                     {
@@ -154,7 +157,7 @@ impl Handler {
                                     if let Some(chan) = source_channel {
                                         let _ = chan.say(&http_clone, format!("[ERROR] **{}** failed: {}", acc.name, err_str)).await;
                                     }
-                                    Self::log_message(Arc::clone(&db_clone), Arc::clone(&http_clone), format!("[ERROR] Automation: **{}** failed. Reason: {}", acc.name, err_str)).await;
+                                    Self::log_message(Arc::clone(&db_clone), Arc::clone(&http_clone), format!("[ERROR] Automation: **{}** failed. Reason: {}", acc.name, err_str), source_channel).await;
                                 }
                             }
                         }
