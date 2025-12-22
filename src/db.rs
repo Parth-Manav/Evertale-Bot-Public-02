@@ -49,17 +49,27 @@ impl Database {
                 println!("[INFO] Loading database from: {}", path);
                 c
             },
-            Err(e) if path == "db.json" => {
-                let fallback = "app/db.json";
-                match fs::read_to_string(fallback) {
-                    Ok(c) => {
-                        println!("[INFO] Loading database from fallback: {}", fallback);
-                        c
-                    },
-                    Err(_) => return Err(e.into()),
+            Err(e) => {
+                // Try several fallback locations
+                let fallbacks = ["app/db.json", "/app/db.json", "../db.json", "./db.json"];
+                let mut found_content = None;
+                
+                for fb in fallbacks {
+                    if let Ok(c) = fs::read_to_string(fb) {
+                        println!("[INFO] Loading database from fallback: {}", fb);
+                        found_content = Some(c);
+                        break;
+                    }
                 }
-            },
-            Err(e) => return Err(e.into()),
+                
+                match found_content {
+                    Some(c) => c,
+                    None => {
+                        println!("[ERROR] Could not find database file at {} or any fallbacks.", path);
+                        return Err(e.into());
+                    }
+                }
+            }
         };
 
         let data: DbData = serde_json::from_str(&content)?;
