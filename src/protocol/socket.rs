@@ -206,8 +206,8 @@ impl EvertextClient {
 
                          // --- 2. Main Game Flow ---
                          
-                         // "Press y to spend mana on event stages:"
-                         if output_text.contains("Press y to spend mana on event stages:") {
+                         // "Press y to spend mana on event stages :"
+                         if output_text.contains("Press y to spend mana on event stages") {
                              println!("[ACTION] Prompt: 'Spend mana'. Sending 'y'...");
                              self.send_command("y").await?;
                          }
@@ -226,26 +226,26 @@ impl EvertextClient {
 
                          // --- 3. Mana Refill Logic (Situational) ---
                          // "DO YOU WANT TO REFILL MANA? (press y to refill):"
-                         if output_text.contains("DO YOU WANT TO REFILL MANA? (press y to refill):") {
+                         if output_text.contains("DO YOU WANT TO REFILL MANA?") {
                              println!("[ACTION] Prompt: 'Refill Mana'. Sending 'y'...");
                              self.send_command("y").await?;
                          }
 
                          // "Enter 1, 2 or 3 to select potion to refill:"
-                         if output_text.contains("Enter 1, 2 or 3 to select potion to refill:") {
+                         if output_text.contains("select potion to refill") {
                              println!("[ACTION] Prompt: 'Select potion'. Sending '3'...");
                              self.send_command("3").await?;
                          }
 
                          // "Enter the number of stam100 potions to refill"
-                         if output_text.contains("Enter the number of stam100 potions to refill") {
+                         if output_text.contains("number of stam100 potions to refill") {
                              println!("[ACTION] Prompt: 'Potion quantity'. Sending '1'...");
                              self.send_command("1").await?;
                          }
 
                          // --- 4. More Events Prompt ---
                          // "Press y to do more events:"
-                         if output_text.contains("Press y to do more events:") {
+                         if output_text.contains("Press y to do more events") {
                              println!("[ACTION] Prompt: 'Do more events?'. Sending 'y' then 'exit'...");
                              self.send_command("y").await?;
                              tokio::time::sleep(Duration::from_millis(500)).await;
@@ -254,7 +254,7 @@ impl EvertextClient {
 
                          // --- 5. End of Loop ---
                          // "Press y to perform more commands:"
-                         if output_text.contains("Press y to perform more commands:") {
+                         if output_text.contains("Press y to perform more commands") {
                              println!("[INFO] Prompt: 'Perform more commands'. Run Complete.");
                              return Err("SESSION_COMPLETE".into()); // Trigger clean exit
                          }
