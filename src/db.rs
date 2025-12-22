@@ -11,6 +11,8 @@ pub struct Account {
     #[serde(rename = "userId")]
     pub user_id: Option<String>,
     pub username: Option<String>,
+    #[serde(rename = "discordNickname")]
+    pub discord_nickname: Option<String>,
     #[serde(rename = "pingEnabled")]
     pub ping_enabled: bool,
     pub status: String,

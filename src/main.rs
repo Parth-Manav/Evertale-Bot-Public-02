@@ -125,16 +125,36 @@ impl Handler {
                             },
                             Err(e) => {
                                 let err_str = e.to_string();
-                                if err_str.contains("ZIGZA_DETECTED") {
-                                    if let Some(chan) = source_channel {
-                                        let _ = chan.say(&http_clone, format!("[WARN] Zigza error on **{}**. Waiting 6 mins before retry.", acc.name)).await;
+                                
+                                if err_str.contains("SESSION_COMPLETE") {
+                                    // Treat as success
+                                    {
+                                        let mut db = db_clone.lock().await;
+                                        let _ = db.update_status(&acc.name, "done");
                                     }
-                                    Self::log_message(Arc::clone(&db_clone), Arc::clone(&http_clone), format!("[WARN] Automation: Zigza detected on **{}**. Retrying in 6m.", acc.name), source_channel).await;
+                                    if let Some(chan) = source_channel {
+                                        let _ = chan.say(&http_clone, format!("[SUCCESS] **{}** completed.", acc.name)).await;
+                                    }
+                                    Self::log_message(Arc::clone(&db_clone), Arc::clone(&http_clone), format!("[SUCCESS] Automation: **{}** completed through prompt flow.", acc.name), source_channel).await;
+
+                                } else if err_str.contains("INVALID_COMMAND_RESTART") {
+                                    if let Some(chan) = source_channel {
+                                         let _ = chan.say(&http_clone, format!("[WARN] Invalid Command on **{}**. Restarting session immediately.", acc.name)).await;
+                                    }
+                                    // Invalid Command -> Restart terminal -> Put back at front of queue
+                                    tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+                                    pending_accounts_to_process.insert(0, acc);
+
+                                } else if err_str.contains("ZIGZA_DETECTED") {
+                                    if let Some(chan) = source_channel {
+                                        let _ = chan.say(&http_clone, format!("[WARN] Zigza error on **{}**. Waiting 10 mins before retry.", acc.name)).await;
+                                    }
+                                    Self::log_message(Arc::clone(&db_clone), Arc::clone(&http_clone), format!("[WARN] Automation: Zigza detected on **{}**. Retrying in 10m.", acc.name), source_channel).await;
                                     {
                                         let mut db = db_clone.lock().await;
                                         let _ = db.update_status(&acc.name, "error: Zigza Retrying");
                                     }
-                                    tokio::time::sleep(tokio::time::Duration::from_secs(360)).await;
+                                    tokio::time::sleep(tokio::time::Duration::from_secs(600)).await;
                                     pending_accounts_to_process.push(acc);
                                 } else if err_str.contains("SERVER_FULL") {
                                     if let Some(chan) = source_channel {
@@ -204,8 +224,8 @@ impl EventHandler for Handler {
             CreateCommand::new("toggle_ping")
                 .description("Toggle ping notifications for your accounts"),
             CreateCommand::new("force_run")
-                .description("Force run automation")
-                .add_option(CreateCommandOption::new(CommandOptionType::String, "name", "Specific Account Name to run (Optional)").required(false)),
+                .description("Force run automation. Use 'all' to run all your accounts.")
+                .add_option(CreateCommandOption::new(CommandOptionType::String, "name", "Account Name or 'all'").required(false)),
             CreateCommand::new("force_run_all")
                 .description("[ADMIN] Run all accounts in the system"),
             CreateCommand::new("force_stop_all")
@@ -300,6 +320,7 @@ impl EventHandler for Handler {
                             target_server: server,
                             user_id: Some(user_id.clone()),
                             username: Some(command.user.name.clone()),
+                            discord_nickname: command.member.as_ref().and_then(|m| m.nick.clone()),
                             ping_enabled: false,
                             status: "pending".to_string(),
                             last_run: None,
@@ -326,13 +347,20 @@ impl EventHandler for Handler {
                 },
                 "force_run" => {
                     let name = command.data.options.iter().find(|o| o.name == "name").and_then(|o| o.value.as_str());
-                    if let Some(n) = name {
+                    
+                    let target_name = name.unwrap_or("all");
+                    
+                    if target_name.to_lowercase() == "all" {
+                        // Run all for THIS user
+                        self.process_queue(ctx.clone(), Some(user_id), Some(command.channel_id)).await;
+                        content = "Queued all your accounts for execution.".to_string();
+                    } else {
                         // Start single
                         let db_clone = Arc::clone(&self.db);
                         let processing_clone = Arc::clone(&self.is_processing);
                         let http_clone = ctx.http.clone();
                         let channel_id = command.channel_id;
-                        let n_owned = n.to_string();
+                        let n_owned = target_name.to_string();
                         
                          tokio::spawn(async move {
                             let (cookie, acc) = {
@@ -362,7 +390,14 @@ impl EventHandler for Handler {
                                                     let _ = channel_id.say(&http_clone, format!("[SUCCESS] **{}** finished.", acc.name)).await;
                                                 },
                                                 Err(e) => {
-                                                    let _ = channel_id.say(&http_clone, format!("[ERROR] **{}** failed: {}", acc.name, e)).await;
+                                                    let err_str = e.to_string();
+                                                    if err_str.contains("SESSION_COMPLETE") {
+                                                        let mut db = db_clone.lock().await;
+                                                        let _ = db.update_status(&acc.name, "done");
+                                                        let _ = channel_id.say(&http_clone, format!("[SUCCESS] **{}** finished.", acc.name)).await;
+                                                    } else {
+                                                        let _ = channel_id.say(&http_clone, format!("[ERROR] **{}** failed: {}", acc.name, err_str)).await;
+                                                    }
                                                 }
                                             }
                                         },
@@ -378,10 +413,7 @@ impl EventHandler for Handler {
                             let mut is_proc = processing_clone.lock().await;
                             *is_proc = false;
                         });
-                        content = "Force run initiated.".to_string();
-                    } else {
-                        self.process_queue(ctx.clone(), Some(user_id), Some(command.channel_id)).await;
-                        content = "Starting your pending accounts...".to_string();
+                        content = format!("Force run initiated for **{}**.", target_name);
                     }
                 },
                 "force_run_all" => {

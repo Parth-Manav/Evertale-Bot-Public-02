@@ -78,50 +78,25 @@ impl EvertextClient {
     pub async fn run_loop(&mut self, account: &Account, decrypted_code: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let mut last_ping = Instant::now();
         let mut state = GameState::Connected;
-        let mut waiting_started: Option<Instant> = None;
+        
+        // Track whether 'auto' has been sent for this session (only once allowed)
+        let mut auto_sent = false;
 
         println!("[INFO][PID:{}] Starting session for account: {}", std::process::id(), account.name);
 
         loop {
             // Heartbeat Logic
             if last_ping.elapsed().as_millis() as u64 > self.ping_interval {
-                // Ping handled by incoming '2' usually, but we can send '3' periodically if needed.
-                // The server usually initiates via '2'.
+                // Ping is usually handled by the server sending '2'
             }
-
-            // Timeout Logic for states
-             if let Some(start_time) = waiting_started {
-                if state == GameState::WaitingProcedure {
-                     if start_time.elapsed().as_secs() >= 200 { // 3:20 minutes
-                        println!("[INFO] 200s Wait Complete. Starting Rapid Fire.");
-                        #[allow(unused_assignments)]
-                        {
-                            state = GameState::RapidFire;
-                            waiting_started = None;
-                        }
-                        
-                        // Execute Rapid Fire
-                        let commands = ["y", "auto", "exit", "exit", "exit", "exit"];
-                        for cmd in commands {
-                            println!("[ACTION] Sending '{}'", cmd);
-                            self.send_command(cmd).await?;
-                             tokio::time::sleep(Duration::from_millis(500)).await;
-                        }
-
-                         println!("[INFO] Rapid Fire done. Waiting 120s...");
-                         tokio::time::sleep(Duration::from_secs(120)).await;
-                         println!("[INFO] Session Complete.");
-                         return Ok(());
-                     }
-                }
-             }
 
             tokio::select! {
                 msg = self.read.next() => {
                     match msg {
                         Some(Ok(m)) => {
                             let text = m.to_string();
-                            println!("[DEBUG] Received: {}", text);
+                            // println!("[DEBUG] Received: {}", text); 
+                            
                             if text == "2" {
                                 self.write.send(Message::Text("3".into())).await?;
                                 last_ping = Instant::now();
@@ -130,17 +105,17 @@ impl EvertextClient {
                                 println!("[INFO] Namespace joined. Initializing session...");
                                 
                                 // Send 'stop' first to ensure it's not already running
-                                println!("[ACTION] Sending 'stop' event...");
-                                let stop_payload = json!(["stop", {}]); // Assuming empty object based on subagent
+                                let stop_payload = json!(["stop", {}]);
                                 self.write.send(Message::Text(format!("42{}", stop_payload.to_string()).into())).await?;
                                 
                                 tokio::time::sleep(Duration::from_millis(500)).await;
 
+                                // Send 'start'
                                 println!("[ACTION] Sending 'start' event...");
                                 let start_payload = json!(["start", {"args": ""}]);
                                 self.write.send(Message::Text(format!("42{}", start_payload.to_string()).into())).await?;
                             } else if text.starts_with("42") {
-                                self.handle_event(&text, &mut state, account, decrypted_code, &mut waiting_started).await?;
+                                self.handle_event(&text, &mut state, account, decrypted_code, &mut auto_sent).await?;
                             }
                         }
                         Some(Err(e)) => return Err(e.into()),
@@ -152,25 +127,33 @@ impl EvertextClient {
     }
 
     async fn send_command(&mut self, cmd: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-         // Payload structure found via browser sniffing: { input: "cmd" }
          let payload = json!(["input", {"input": cmd}]); 
          let packet = format!("42{}", payload.to_string());
          self.write.send(Message::Text(packet.into())).await?;
          Ok(())
     }
 
-    async fn handle_event(&mut self, text: &str, state: &mut GameState, account: &Account, code: &str, wait_timer: &mut Option<Instant>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    async fn handle_event(&mut self, text: &str, state: &mut GameState, account: &Account, code: &str, auto_sent: &mut bool) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let json_part = &text[2..];
-        let event: serde_json::Value = serde_json::from_str(json_part)?;
+        // Parse the event. If it fails, just ignore it (sometimes random packets come in)
+        let event: serde_json::Value = match serde_json::from_str(json_part) {
+            Ok(v) => v,
+            Err(_) => return Ok(()),
+        };
         
         if let Some(event_array) = event.as_array() {
-            let event_name = event_array[0].as_str().unwrap_or("");
+            let event_name = event_array.get(0).and_then(|v| v.as_str()).unwrap_or("");
             let event_data = event_array.get(1);
 
             if event_name == "output" {
                  if let Some(data) = event_data {
                      if let Some(output_text) = data["data"].as_str() {
-                         println!("[TERMINAL] {}", output_text.replace("\n", " ").chars().take(100).collect::<String>());
+                         // Print terminal output (clean up newlines for log readability)
+                         let clean_log = output_text.replace("\n", " ");
+                         // Log only significant chunks to avoid spam
+                         if clean_log.len() > 5 {
+                             println!("[TERMINAL] {}", clean_log.chars().take(150).collect::<String>());
+                         }
                          
                          // Update history for multi-line parsing
                          self.history.push_str(output_text);
@@ -179,83 +162,105 @@ impl EvertextClient {
                              self.history.replace_range(..drain_len, "");
                          }
 
-                         // 1. Initial login prompts
+                         // --- 1. Initial / Login Flow ---
                          if output_text.contains("Enter Command to use") {
-                             println!("[DEBUG] State check for 'd': {:?}", state);
-                             if *state == GameState::Connected || *state == GameState::WaitingProcedure {
-                                 println!("[PID:{}] [From TERMINAL] Enter Command to use. Sending 'd'...", std::process::id());
-                                 *state = GameState::SentD;
-                                 self.send_command("d").await?;
-                             }
+                             println!("[ACTION] Prompt: 'Enter Command'. Sending 'd'...");
+                             *state = GameState::SentD;
+                             self.send_command("d").await?;
                          }
                          
                          if output_text.contains("Enter Restore code") {
-                             println!("[DEBUG] State check for code: {:?}", state);
-                             if *state == GameState::SentD || *state == GameState::Connected || *state == GameState::WaitingProcedure {
-                                 println!("[PID:{}] [From TERMINAL] Enter Restore code. Sending Code...", std::process::id());
-                                 *state = GameState::SentCode;
-                                 self.send_command(code).await?;
-                             }
+                             println!("[ACTION] Prompt: 'Enter Restore code'. Sending Code...");
+                             *state = GameState::SentCode;
+                             self.send_command(code).await?;
                          }
 
-                         // 2. Server selection
+                         // Server Selection
                          if output_text.contains("Which acc u want to Login") {
-                             if *state == GameState::SentCode || *state == GameState::Connected || *state == GameState::WaitingProcedure {
-                                 println!("[From TERMINAL] Server Selection List Received. Parsing...");
-                                 
-                                 let mut selected_index = "1".to_string();
-                                 if let Some(target) = &account.target_server {
-                                     // Regex to find: "1--> [account_name] (E-15)"
-                                     let re = Regex::new(r"(\d+)-->.*?\((.*?)\)").unwrap();
-                                     let mut found = false;
-                                     
-                                     for cap in re.captures_iter(&self.history) {
-                                         let index = &cap[1];
-                                         let server_name = &cap[2];
-                                         
-                                         // Match "E-21" or "All of them" (mapped from "All")
-                                         if server_name.contains(target) || 
-                                            (target.to_lowercase() == "all" && server_name.contains("All of them")) {
-                                             println!("[INFO] Found match for target '{}': Server '{}' at index {}", target, server_name, index);
-                                             selected_index = index.to_string();
-                                             found = true;
-                                             break;
-                                         }
-                                     }
-                                     
-                                     if !found {
-                                         println!("[WARN] Target server '{}' not found in list. Defaulting to '1'.", target);
-                                     }
-                                 } else {
-                                     println!("[INFO] No targetServer specified. Defaulting to '1'.");
-                                 }
-
-                                 println!("[ACTION] Selecting server index: {}", selected_index);
-                                 self.send_command(&selected_index).await?;
-                                 *state = GameState::ServerSelected;
-                             }
-                         }
-
-                         // 3. Success / Resumed session detection
-                         if output_text.contains("Performing Dailies") || 
-                            output_text.contains("Press y") {
+                             println!("[ACTION] Prompt: 'Server Selection'. parsing...");
+                             let mut selected_index = "1".to_string();
                              
-                             if *state != GameState::WaitingProcedure && *state != GameState::RapidFire && *state != GameState::Finished {
-                                 println!("[INFO] Session active/resumed. Starting 200s wait.");
-                                 *state = GameState::WaitingProcedure;
-                                 *wait_timer = Some(Instant::now());
+                             if let Some(target) = &account.target_server {
+                                 let re = Regex::new(r"(\d+)-->.*?\((.*?)\)").unwrap();
+                                 let mut found = false;
+                                 for cap in re.captures_iter(&self.history) {
+                                     let index = &cap[1];
+                                     let server_name = &cap[2];
+                                     if server_name.contains(target) || (target.to_lowercase() == "all" && server_name.contains("All of them")) {
+                                         println!("[INFO] Found target server '{}' at index {}", target, index);
+                                         selected_index = index.to_string();
+                                         found = true;
+                                         break;
+                                     }
+                                 }
+                                 if !found { println!("[WARN] Target '{}' not found. Defaulting to '1'.", target); }
                              }
-                         }
-                         
-                         // 4. Fallback for immediate wait transition
-                         if *state == GameState::SentCode && account.target_server.is_none() {
-                             // If no server selection needed, we can jump to wait if some output happens
-                             // but it's safer to wait for a specific prompt like above. 
-                             // However, automation.js just waits after the command.
-                             // Let's keep it but prioritize the prompt detection.
+                             println!("[ACTION] Sending server choice: {}", selected_index);
+                             self.send_command(&selected_index).await?;
+                             *state = GameState::ServerSelected;
                          }
 
-                         // 5. Error handling
+                         // --- 2. Main Game Flow ---
+                         
+                         // "Press y to spend mana on event stages:"
+                         if output_text.contains("Press y to spend mana on event stages:") {
+                             println!("[ACTION] Prompt: 'Spend mana'. Sending 'y'...");
+                             self.send_command("y").await?;
+                         }
+
+                         // "next: Go to the next event. [default option if nothing entered]"
+                         if output_text.contains("next: Go to the next event") {
+                             if !*auto_sent {
+                                 println!("[ACTION] Prompt: 'next event'. Sending 'auto' (First time)...");
+                                 self.send_command("auto").await?;
+                                 *auto_sent = true;
+                             } else {
+                                 println!("[ACTION] Prompt: 'next event'. Sending 'exit' (Already sent auto)...");
+                                 self.send_command("exit").await?;
+                             }
+                         }
+
+                         // --- 3. Mana Refill Logic (Situational) ---
+                         // "DO YOU WANT TO REFILL MANA? (press y to refill):"
+                         if output_text.contains("DO YOU WANT TO REFILL MANA? (press y to refill):") {
+                             println!("[ACTION] Prompt: 'Refill Mana'. Sending 'y'...");
+                             self.send_command("y").await?;
+                         }
+
+                         // "Enter 1, 2 or 3 to select potion to refill:"
+                         if output_text.contains("Enter 1, 2 or 3 to select potion to refill:") {
+                             println!("[ACTION] Prompt: 'Select potion'. Sending '3'...");
+                             self.send_command("3").await?;
+                         }
+
+                         // "Enter the number of stam100 potions to refill"
+                         if output_text.contains("Enter the number of stam100 potions to refill") {
+                             println!("[ACTION] Prompt: 'Potion quantity'. Sending '1'...");
+                             self.send_command("1").await?;
+                         }
+
+                         // --- 4. More Events Prompt ---
+                         // "Press y to do more events:"
+                         if output_text.contains("Press y to do more events:") {
+                             println!("[ACTION] Prompt: 'Do more events?'. Sending 'y'...");
+                             self.send_command("y").await?;
+                         }
+
+                         // --- 5. End of Loop ---
+                         // "Press y to perform more commands:"
+                         if output_text.contains("Press y to perform more commands:") {
+                             println!("[INFO] Prompt: 'Perform more commands'. Run Complete.");
+                             return Err("SESSION_COMPLETE".into()); // Trigger clean exit
+                         }
+
+                         // --- 6. Error Handling ---
+                         
+                         // "Invalid Command ... Exiting Now"
+                         if output_text.contains("Invalid Command") && output_text.contains("Exiting Now") {
+                             println!("[ERROR] Invalid Command Detected. Triggering Restart...");
+                             return Err("INVALID_COMMAND_RESTART".into());
+                         }
+
                          if output_text.contains("Either Zigza error or Incorrect Restore Code Entered") {
                              println!("[ERROR] Zigza Error Detected!");
                              return Err("ZIGZA_DETECTED".into());
