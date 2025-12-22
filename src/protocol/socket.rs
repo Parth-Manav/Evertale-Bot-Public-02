@@ -225,8 +225,8 @@ impl EvertextClient {
                          }
 
                          // --- 3. Mana Refill Logic (Situational) ---
-                         // "DO YOU WANT TO REFILL MANA? (press y to refill):"
-                         if output_text.contains("DO YOU WANT TO REFILL MANA?") {
+                         // "DO U WANT TO REFILL MANA ? (press y to refill):"
+                         if output_text.contains("REFILL MANA") {
                              println!("[ACTION] Prompt: 'Refill Mana'. Sending 'y'...");
                              self.send_command("y").await?;
                          }
