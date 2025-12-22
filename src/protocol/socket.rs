@@ -226,13 +226,14 @@ impl EvertextClient {
 
                          // --- 3. Mana Refill Logic (Situational) ---
                          // "DO U WANT TO REFILL MANA ? (press y to refill):"
-                         if output_text.contains("REFILL MANA") {
+                         // "DO U WANT TO REFILL MANA ? (press y to refill):"
+                         if output_text.contains("DO U WANT TO REFILL MANA") {
                              println!("[ACTION] Prompt: 'Refill Mana'. Sending 'y'...");
                              self.send_command("y").await?;
                          }
 
                          // "Enter 1, 2 or 3 to select potion to refill:"
-                         if output_text.contains("select potion to refill") {
+                         if output_text.contains("Enter 1, 2 or 3 to select potion to refill") {
                              println!("[ACTION] Prompt: 'Select potion'. Sending '3'...");
                              self.send_command("3").await?;
                          }
@@ -245,11 +246,12 @@ impl EvertextClient {
 
                          // --- 4. More Events Prompt ---
                          // "Press y to do more events:"
+                         // User logic: "we will write 'y' and now the terminal will ask for 'next: ...' now we will write 'exit'"
                          if output_text.contains("Press y to do more events") {
-                             println!("[ACTION] Prompt: 'Do more events?'. Sending 'y' then 'exit'...");
+                             println!("[ACTION] Prompt: 'Do more events?'. Sending 'y' (waiting for 'next' prompt to exit)...");
                              self.send_command("y").await?;
-                             tokio::time::sleep(Duration::from_millis(500)).await;
-                             self.send_command("exit").await?;
+                             // We do NOT send 'exit' here. We wait for the "next: Go to the next event" prompt to appear again.
+                             // Since 'auto_sent' is already true, the 'next' block above will handle sending 'exit'.
                          }
 
                          // --- 5. End of Loop ---
