@@ -48,9 +48,11 @@ impl Database {
         if let Ok(cwd) = std::env::current_dir() {
             println!("[DEBUG] Current working directory: {:?}", cwd);
         }
-        if let Ok(entries) = fs::read_dir(".") {
-            let files: Vec<_> = entries.filter_map(|e| e.ok().map(|e| e.file_name().into_string().unwrap_or_default())).collect();
-            println!("[DEBUG] Files in '.': {:?}", files);
+        for dir in [".", "/app", "/out/bin"] {
+            if let Ok(entries) = fs::read_dir(dir) {
+                let files: Vec<_> = entries.filter_map(|e| e.ok().map(|e| e.file_name().into_string().unwrap_or_default())).collect();
+                println!("[DEBUG] Files in '{}': {:?}", dir, files);
+            }
         }
         // --- End Diagnostics ---
 
