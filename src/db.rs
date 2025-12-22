@@ -63,7 +63,7 @@ impl Database {
                 println!("[INFO] Loading database from file: {}", path);
                 c
             },
-            Err(e) => {
+            Err(_e) => {
                 println!("[WARN] Could not find database at {}. Searching fallbacks...", path);
                 // Try several fallback locations
                 let fallbacks = [

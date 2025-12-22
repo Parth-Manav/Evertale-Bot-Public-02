@@ -177,12 +177,12 @@ impl EvertextClient {
 
                          // Server Selection
                          if output_text.contains("Which acc u want to Login") {
-                             println!("[ACTION] Prompt: 'Server Selection'. parsing...");
-                             let mut selected_index = "1".to_string();
-                             
                              if let Some(target) = &account.target_server {
+                                 println!("[ACTION] Prompt: 'Server Selection'. Parsing for '{}'...", target);
+                                 let mut selected_index = "1".to_string();
                                  let re = Regex::new(r"(\d+)-->.*?\((.*?)\)").unwrap();
                                  let mut found = false;
+                                 
                                  for cap in re.captures_iter(&self.history) {
                                      let index = &cap[1];
                                      let server_name = &cap[2];
@@ -194,10 +194,14 @@ impl EvertextClient {
                                      }
                                  }
                                  if !found { println!("[WARN] Target '{}' not found. Defaulting to '1'.", target); }
+                                 
+                                 println!("[ACTION] Sending server choice: {}", selected_index);
+                                 self.send_command(&selected_index).await?;
+                                 *state = GameState::ServerSelected;
+                             } else {
+                                 println!("[INFO] No targetServer specified. Assuming single server - waiting for terminal to auto-select.");
+                                 // Do NOT send any command. Terminal handles it.
                              }
-                             println!("[ACTION] Sending server choice: {}", selected_index);
-                             self.send_command(&selected_index).await?;
-                             *state = GameState::ServerSelected;
                          }
 
                          // --- 2. Main Game Flow ---
@@ -242,8 +246,10 @@ impl EvertextClient {
                          // --- 4. More Events Prompt ---
                          // "Press y to do more events:"
                          if output_text.contains("Press y to do more events:") {
-                             println!("[ACTION] Prompt: 'Do more events?'. Sending 'y'...");
+                             println!("[ACTION] Prompt: 'Do more events?'. Sending 'y' then 'exit'...");
                              self.send_command("y").await?;
+                             tokio::time::sleep(Duration::from_millis(500)).await;
+                             self.send_command("exit").await?;
                          }
 
                          // --- 5. End of Loop ---
