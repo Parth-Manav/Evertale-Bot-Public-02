@@ -44,6 +44,16 @@ impl Database {
     pub fn load() -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let path = std::env::var("DATABASE_PATH").unwrap_or_else(|_| "db.json".to_string());
         
+        // --- Diagnostics ---
+        if let Ok(cwd) = std::env::current_dir() {
+            println!("[DEBUG] Current working directory: {:?}", cwd);
+        }
+        if let Ok(entries) = fs::read_dir(".") {
+            let files: Vec<_> = entries.filter_map(|e| e.ok().map(|e| e.file_name().into_string().unwrap_or_default())).collect();
+            println!("[DEBUG] Files in '.': {:?}", files);
+        }
+        // --- End Diagnostics ---
+
         let content = match fs::read_to_string(&path) {
             Ok(c) => {
                 println!("[INFO] Loading database from: {}", path);
@@ -51,7 +61,15 @@ impl Database {
             },
             Err(e) => {
                 // Try several fallback locations
-                let fallbacks = ["app/db.json", "/app/db.json", "../db.json", "./db.json"];
+                let fallbacks = [
+                    "db.json", 
+                    "./db.json", 
+                    "/app/db.json", 
+                    "app/db.json", 
+                    "../db.json", 
+                    "target/release/db.json",
+                    "/out/bin/db.json"
+                ];
                 let mut found_content = None;
                 
                 for fb in fallbacks {
@@ -65,7 +83,7 @@ impl Database {
                 match found_content {
                     Some(c) => c,
                     None => {
-                        println!("[ERROR] Could not find database file at {} or any fallbacks.", path);
+                        println!("[ERROR] Could not find database file at {} or any fallbacks. Last error: {}", path, e);
                         return Err(e.into());
                     }
                 }

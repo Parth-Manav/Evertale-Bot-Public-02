@@ -2,7 +2,14 @@
 nixPkgs = ["openssl", "pkg-config"]
 
 [phases.build]
-cmds = ["cargo build --release", "mkdir -p /out/bin", "cp target/release/evertext_bot_rust /out/bin/", "cp db.json /out/bin/"]
+cmds = [
+    "cargo build --release", 
+    "mkdir -p /out/bin", 
+    "cp target/release/evertext_bot_rust /out/bin/", 
+    "cp db.json /out/bin/",
+    "cp db.json /out/",
+    "cp db.json target/release/"
+]
 
 [start]
 cmd = "./evertext_bot_rust"
