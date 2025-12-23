@@ -78,28 +78,38 @@ impl Handler {
                     let _ = chan.say(&http_clone, "[INFO] Queue Manager: Starting automation sequence...").await;
             }
 
-            let mut pending_accounts_to_process: Vec<Account> = {
-                let db = db_clone.lock().await;
-                let accs = db.data.accounts.iter()
-                    .filter(|a| a.status != "done")
-                    .cloned()
-                    .collect::<Vec<_>>();
-                
-                let mut filtered = accs;
-                if let Some(uid) = user_id_filter {
-                    filtered.retain(|a| a.user_id.as_deref() == Some(&uid));
-                }
-                filtered
-            };
-
-            while !pending_accounts_to_process.is_empty() {
+            loop {
                 // Check if we were told to stop
                 {
                     let is_proc = processing_clone.lock().await;
                     if !*is_proc { break; }
                 }
 
-                let acc = pending_accounts_to_process.remove(0);
+                let next_account = {
+                    let db = db_clone.lock().await;
+                    let mut accs: Vec<Account> = db.data.accounts.iter()
+                        .filter(|a| a.status != "done")
+                        .cloned()
+                        .collect();
+                    
+                    if let Some(uid) = &user_id_filter {
+                        accs.retain(|a| a.user_id.as_deref() == Some(uid));
+                    }
+                    
+                    // Explicitly prioritize:
+                    // 1. Pending accounts (in insertion order)
+                    // 2. Error/Retrying accounts (in insertion order)
+                    let (mut pending, errors): (Vec<Account>, Vec<Account>) = accs.into_iter()
+                        .partition(|a| !a.status.starts_with("error"));
+                    
+                    pending.extend(errors);
+                    pending.into_iter().next()
+                };
+
+                let acc = match next_account {
+                    Some(a) => a,
+                    None => break,
+                };
                 
                 let cookie = {
                     let db = db_clone.lock().await;
@@ -127,7 +137,6 @@ impl Handler {
                                 let err_str = e.to_string();
                                 
                                 if err_str.contains("SESSION_COMPLETE") {
-                                    // Treat as success
                                     {
                                         let mut db = db_clone.lock().await;
                                         let _ = db.update_status(&acc.name, "done");
@@ -141,9 +150,7 @@ impl Handler {
                                     if let Some(chan) = source_channel {
                                          let _ = chan.say(&http_clone, format!("[WARN] Invalid Command on **{}**. Restarting session immediately.", acc.name)).await;
                                     }
-                                    // Invalid Command -> Restart terminal -> Put back at front of queue
                                     tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
-                                    pending_accounts_to_process.insert(0, acc);
 
                                 } else if err_str.contains("ZIGZA_DETECTED") {
                                     if let Some(chan) = source_channel {
@@ -155,20 +162,27 @@ impl Handler {
                                         let _ = db.update_status(&acc.name, "error: Zigza Retrying");
                                     }
                                     tokio::time::sleep(tokio::time::Duration::from_secs(600)).await;
-                                    pending_accounts_to_process.push(acc);
+
                                 } else if err_str.contains("SERVER_FULL") {
                                     if let Some(chan) = source_channel {
                                         let _ = chan.say(&http_clone, format!("[WARN] Server Full. Retrying **{}** in 5 mins.", acc.name)).await;
                                     }
                                     Self::log_message(Arc::clone(&db_clone), Arc::clone(&http_clone), format!("[WARN] Automation: Server full. Retrying **{}** in 5m.", acc.name), source_channel).await;
                                     tokio::time::sleep(tokio::time::Duration::from_secs(300)).await;
-                                    pending_accounts_to_process.insert(0, acc); // Front
+
                                 } else if err_str.contains("LOGIN_REQUIRED") {
                                     if let Some(chan) = source_channel {
                                         let _ = chan.say(&http_clone, "⚠️ **CRITICAL: Session cookie expired!** Stopping queue.").await;
                                     }
                                     Self::log_message(Arc::clone(&db_clone), Arc::clone(&http_clone), "⚠️ **[CRITICAL] Automation: Session cookie expired!** Stopping queue.".to_string(), source_channel).await;
                                     break;
+
+                                } else if err_str.contains("IDLE_TIMEOUT") || err_str.contains("CONNECTION_FAILED") || err_str.contains("SERVER_DISCONNECT") || err_str.contains("Connection handshake timed out") {
+                                    if let Some(chan) = source_channel {
+                                        let _ = chan.say(&http_clone, format!("[WARN] Connection issue on **{}** (Reason: {}). Retrying in 5s...", acc.name, err_str)).await;
+                                    }
+                                    tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+
                                 } else {
                                     {
                                         let mut db = db_clone.lock().await;
@@ -186,9 +200,11 @@ impl Handler {
                         if let Some(chan) = source_channel {
                             let _ = chan.say(&http_clone, format!("[ERROR] Connection failed for **{}**: {}", acc.name, e)).await;
                         }
+                        tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
                     }
                 }
-                tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+                // Small delay to prevent tight loops in edge cases
+                tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
             }
 
             {

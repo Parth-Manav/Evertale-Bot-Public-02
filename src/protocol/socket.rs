@@ -46,8 +46,12 @@ impl EvertextClient {
         println!("[INFO] Connecting to EverText WebSocket...");
         let (mut ws_stream, _) = connect_async(request).await?;
 
-        // 1. Wait for "Open" packet (Type 0)
-        let msg = ws_stream.next().await.ok_or("Stream closed")??;
+        // 1. Wait for "Open" packet (Type 0) with a timeout
+        let msg = tokio::time::timeout(Duration::from_secs(10), ws_stream.next())
+            .await
+            .map_err(|_| "Connection handshake timed out")?
+            .ok_or("Stream closed")??;
+
         let msg_str = msg.to_string();
         
         if msg_str.starts_with('0') {
@@ -292,6 +296,17 @@ impl EvertextClient {
                          }
                      }
                  }
+            } else if event_name == "idle_timeout" {
+                println!("[ERROR] Server sent 'idle_timeout'. Disconnecting...");
+                return Err("IDLE_TIMEOUT".into());
+            } else if event_name == "connection_failed" {
+                println!("[ERROR] Server sent 'connection_failed'. Disconnecting...");
+                return Err("CONNECTION_FAILED".into());
+            } else if event_name == "disconnect" {
+                println!("[ERROR] Server sent 'disconnect' event.");
+                return Err("SERVER_DISCONNECT".into());
+            } else {
+                println!("[DEBUG] Unhandled Socket.io event: {} -> {:?}", event_name, event_data);
             }
         }
         Ok(())
