@@ -178,7 +178,7 @@ impl Handler {
                                     Self::log_message(Arc::clone(&db_clone), Arc::clone(&http_clone), "⚠️ **[CRITICAL] Automation: Session cookie expired!** Stopping queue.".to_string(), source_channel).await;
                                     break;
 
-                                } else if err_str.contains("IDLE_TIMEOUT") || err_str.contains("CONNECTION_FAILED") || err_str.contains("SERVER_DISCONNECT") || err_str.contains("Connection handshake timed out") {
+                                } else if err_str.contains("IDLE_TIMEOUT") || err_str.contains("CONNECTION_FAILED") || err_str.contains("SERVER_DISCONNECT") || err_str.contains("Connection handshake timed out") || err_str.contains("Failed to handshake") || err_str.contains("Stream closed") {
                                     if let Some(chan) = source_channel {
                                         let _ = chan.say(&http_clone, format!("[WARN] Connection issue on **{}** (Reason: {}). Retrying in 5s...", acc.name, err_str)).await;
                                     }
@@ -547,7 +547,7 @@ async fn main() {
         is_processing: Arc::new(Mutex::new(false)),
     };
 
-    let intents = GatewayIntents::GUILD_MESSAGES | GatewayIntents::DIRECT_MESSAGES | GatewayIntents::MESSAGE_CONTENT;
+    let intents = GatewayIntents::GUILD_MESSAGES | GatewayIntents::DIRECT_MESSAGES;
 
     println!("[INFO] Starting EverText Rust Bot...");
     let mut client = Client::builder(&token, intents)
